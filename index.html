@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TRICYKING | Tricycle Booking</title>
+    
+    <!-- 1. Load Tailwind CSS (Design) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. Load Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- 3. Load React & ReactDOM (Engine) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 4. Load Babel (To make the code work in browser) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Styles -->
+    <style>
+      body { font-family: 'Outfit', sans-serif; }
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: #f1f1f1; }
+      ::-webkit-scrollbar-thumb { background: #888; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #555; }
+      .perspective-1000 { perspective: 1000px; }
+      .preserve-3d { transform-style: preserve-3d; }
+      .rotate-x-60 { transform: rotateX(60deg) rotateZ(-45deg); }
+      .animate-float { animation: float 3s ease-in-out infinite; }
+      @keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
+      }
+    </style>
+</head>
+<body class="bg-slate-900 text-white overflow-hidden">
+    <div id="root"></div>
+
+    <!-- MAIN APP CODE -->
+    <script type="text/babel" data-presets="react,typescript">
+        const { useState, useEffect } = React;
+
+        // --- TYPES ---
+        const Role = {
+            ADMIN: 'ADMIN',
+            DRIVER: 'DRIVER',
+            PASSENGER: 'PASSENGER',
+            NONE: 'NONE'
+        };
+
+        // --- MOCK SERVICE (DATABASE) ---
+        let driverRequests = [];
+        let bookings = [];
+        let activeDrivers = [];
+
+        const MockService = {
+            loginAdmin: (password) => password === 'janromark',
+            
+            getDriverRequests: () => [...driverRequests],
+
+            requestDriverAccount: (name) => {
+                const newRequest = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    name,
+                    status: 'PENDING'
+                };
+                driverRequests.push(newRequest);
+                return newRequest;
+            },
+
+            approveDriver: (requestId) => {
+                const req = driverRequests.find(r => r.id === requestId);
+                if (req) {
+                    req.status = 'APPROVED';
+                    req.generatedUserId = `DRV-${Math.floor(Math.random() * 10000)}`;
+                    req.generatedPassword = Math.random().toString(36).slice(-8);
+                    activeDrivers.push({
+                        id: req.generatedUserId,
+                        name: req.name,
+                        role: Role.DRIVER,
+                        password: req.generatedPassword
+                    });
+                }
+            },
+
+            rejectDriver: (requestId) => {
+                const req = driverRequests.find(r => r.id === requestId);
+                if (req) req.status = 'REJECTED';
+            },
+
+            loginDriver: (userId, pass) => {
+                return activeDrivers.find(d => d.id === userId && d.password === pass);
+            },
+
+            getAvailableBookings: () => bookings.filter(b => b.status === 'PENDING'),
+            
+            getMyBooking: (driverId) => bookings.find(b => b.driverId === driverId && (b.status === 'ACCEPTED')),
+
+            acceptBooking: (bookingId, driverId, driverName) => {
+                const booking = bookings.find(b => b.id === bookingId);
+                if (booking) {
+                    booking.status = 'ACCEPTED';
+                    booking.driverId = driverId;
+                    booking.driverName = driverName;
+                }
+            },
+
+            rejectBooking: (bookingId) => {
+                const booking = bookings.find(b => b.id === bookingId);
+                if (booking) {
+                    booking.status = 'REJECTED';
+                    booking.driverId = undefined;
+                }
+            },
+
+            loginPassenger: (name, idNumber) => ({
+                id: idNumber,
+                name: name,
+                role: Role.PASSENGER,
+                idNumber: idNumber
+            }),
+
+            createBooking: (passengerId, passengerName, seats, pickup, dropoff) => {
+                // Cancel existing
+                bookings = bookings.map(b => (b.passengerId === passengerId && b.status === 'PENDING') ? { ...b, status: 'CANCELLED' } : b);
+                const newBooking = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    passengerId,
+                    passengerName,
+                    seats,
+                    status: 'PENDING',
+                    pickup,
+                    dropoff,
+                    messages: []
+                };
+                bookings.push(newBooking);
+                return newBooking;
+            },
+
+            getPassengerBooking: (passengerId) => bookings.find(b => b.passengerId === passengerId && ['PENDING', 'ACCEPTED'].includes(b.status)),
+
+            cancelBooking: (bookingId) => {
+                const booking = bookings.find(b => b.id === bookingId);
+                if (booking) booking.status = 'CANCELLED';
+            },
+
+            sendMessage: (bookingId, senderId, senderName, text) => {
+                const booking = bookings.find(b => b.id === bookingId);
+                if (booking) {
+                    booking.messages.push({
+                        id: Math.random().toString(36).substr(2, 9),
+                        senderId,
+                        senderName,
+                        text,
+                        timestamp: Date.now()
+                    });
+                }
+            },
+
+            getMessages: (bookingId) => {
+                const booking = bookings.find(b => b.id === bookingId);
+                return booking ? booking.messages : [];
+            }
+        };
+
+        // --- COMPONENTS ---
+
+        const Button = ({ children, variant = 'primary', className = '', ...props }) => {
+            const baseStyle = "px-6 py-3 rounded-xl font-bold transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-lg flex items-center justify-center gap-2";
+            const variants = {
+                primary: "bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white shadow-blue-500/50",
+                danger: "bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-white shadow-red-500/50",
+                success: "bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white shadow-green-500/50",
+                outline: "border-2 border-white/20 hover:border-white/50 text-white bg-white/5 backdrop-blur-sm"
+            };
+            return <button className={`${baseStyle} ${variants[variant]} ${className}`} {...props}>{children}</button>;
+        };
+
+        const Input = (props) => (
+            <input className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 transition-all backdrop-blur-md" {...props}/>
+        );
+
+        const IsometricMap = ({ active = false, children }) => (
+            <div className={`relative w-full h-full overflow-hidden bg-slate-800 rounded-3xl border border-white/10 shadow-2xl ${active ? 'opacity-100' : 'opacity-50'}`}>
+                <div className="absolute inset-0 flex items-center justify-center perspective-1000">
+                    <div className="relative w-[150%] h-[150%] bg-slate-900 rotate-x-60 shadow-2xl border-4 border-slate-700 grid-pattern">
+                        <div className="absolute inset-0" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)', backgroundSize: '50px 50px' }}></div>
+                        <div className="absolute top-0 left-1/2 w-20 h-full bg-slate-800/80 -translate-x-1/2 border-l border-r border-white/5"></div>
+                        <div className="absolute top-1/2 left-0 w-full h-20 bg-slate-800/80 -translate-y-1/2 border-t border-b border-white/5"></div>
+                        <div className="absolute top-1/4 left-1/4 w-24 h-24 bg-blue-500/20 border border-blue-400/30 transform -translate-z-12 shadow-[0_0_30px_rgba(59,130,246,0.2)]"></div>
+                        <div className="absolute bottom-1/4 right-1/4 w-32 h-32 bg-purple-500/20 border border-purple-400/30 shadow-[0_0_30px_rgba(168,85,247,0.2)]"></div>
+                        <div className="absolute inset-0 flex items-center justify-center">{children}</div>
+                    </div>
+                </div>
+                <div className="absolute bottom-4 right-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-xs text-cyan-400 border border-cyan-500/30">3D LIVE MAP</div>
+            </div>
+        );
+
+        const TricycleMarker = ({ type }) => (
+            <div className={`relative animate-float ${type === 'driver' ? 'z-20' : 'z-10'}`}>
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg border-2 ${type === 'driver' ? 'bg-amber-400 border-amber-200 text-amber-900' : 'bg-cyan-500 border-cyan-200 text-white'}`}>
+                    {type === 'driver' ? '🛺' : '🧍'}
+                </div>
+                <div className={`absolute -bottom-4 left-1/2 -translate-x-1/2 w-8 h-2 bg-black/50 blur-sm rounded-full`} />
+            </div>
+        );
+
+        const Card = ({ children, title }) => (
+            <div className="bg-slate-800/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl w-full max-w-md mx-auto">
+                {title && <h2 className="text-2xl font-bold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-300">{title}</h2>}
+                {children}
+            </div>
+        );
+
+        // --- VIEWS ---
+
+        const AdminLogin = ({ onLogin, onBack }) => {
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            return (
+                <div className="min-h-screen flex items-center justify-center p-4 bg-slate-900">
+                    <Card title="Admin Access">
+                        <form onSubmit={(e) => { e.preventDefault(); MockService.loginAdmin(password) ? onLogin() : setError('Invalid Access Key'); }} className="space-y-4">
+                            <Input type="password" placeholder="Enter Password" value={password} onChange={e => setPassword(e.target.value)} />
+                            {error && <p className="text-red-400 text-sm">{error}</p>}
+                            <Button type="submit" className="w-full">Unlock System</Button>
+                            <Button type="button" variant="outline" className="w-full" onClick={onBack}>Back</Button>
+                        </form>
+                    </Card>
+                </div>
+            );
+        };
+
+        const PassengerLogin = ({ onLogin, onBack }) => {
+            const [name, setName] = useState('');
+            const [idNumber, setIdNumber] = useState('');
+            return (
+                <div className="min-h-screen flex items-center justify-center p-4 bg-slate-900">
+                    <Card title="Passenger Login">
+                        <form onSubmit={(e) => { e.preventDefault(); if(name && idNumber) onLogin(MockService.loginPassenger(name, idNumber)); }} className="space-y-4">
+                            <Input placeholder="Full Name" value={name} onChange={e => setName(e.target.value)} required />
+                            <Input placeholder="ID Number" value={idNumber} onChange={e => setIdNumber(e.target.value)} required />
+                            <Button type="submit" className="w-full">Book a Ride</Button>
+                            <Button type="button" variant="outline" className="w-full" onClick={onBack}>Back</Button>
+                        </form>
+                    </Card>
+                </div>
+            );
+        };
+
+        const DriverLogin = ({ onLogin, onBack }) => {
+            const [isRequestMode, setIsRequestMode] = useState(false);
+            const [name, setName] = useState('');
+            const [userId, setUserId] = useState('');
+            const [password, setPassword] = useState('');
+            const [msg, setMsg] = useState('');
+
+            return (
+                <div className="min-h-screen flex items-center justify-center p-4 bg-slate-900">
+                    <Card title={isRequestMode ? "Request Driver Account" : "Driver Portal"}>
+                        {isRequestMode ? (
+                            <form onSubmit={(e) => { e.preventDefault(); if(name) { MockService.requestDriverAccount(name); setMsg('Request sent! Wait for approval.'); setName(''); } }} className="space-y-4">
+                                <p className="text-sm text-gray-400">Apply to become a verified driver.</p>
+                                <Input placeholder="Full Name" value={name} onChange={e => setName(e.target.value)} required />
+                                <Button type="submit" className="w-full">Submit Request</Button>
+                                <p className="text-center text-sm text-gray-400 cursor-pointer hover:text-white" onClick={() => {setIsRequestMode(false); setMsg('');}}>Already have an account? Login</p>
+                            </form>
+                        ) : (
+                            <form onSubmit={(e) => { e.preventDefault(); const u = MockService.loginDriver(userId, password); u ? onLogin(u) : setMsg('Invalid Credentials'); }} className="space-y-4">
+                                <Input placeholder="User ID" value={userId} onChange={e => setUserId(e.target.value)} required />
+                                <Input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+                                <Button type="submit" className="w-full">Login</Button>
+                                <p className="text-center text-sm text-gray-400 cursor-pointer hover:text-white" onClick={() => {setIsRequestMode(true); setMsg('');}}>No account? Request Access</p>
+                            </form>
+                        )}
+                        {msg && <div className="mt-4 p-3 bg-white/10 rounded-lg text-center text-sm animate-pulse">{msg}</div>}
+                        <div className="mt-4"><Button variant="outline" className="w-full" onClick={onBack}>Back to Home</Button></div>
+                    </Card>
+                </div>
+            );
+        };
+
+        const AdminDashboard = ({ onLogout }) => {
+            const [requests, setRequests] = useState([]);
+            const [activeTab, setActiveTab] = useState('REQUESTS');
+            
+            useEffect(() => {
+                const i = setInterval(() => setRequests(MockService.getDriverRequests()), 1000);
+                return () => clearInterval(i);
+            }, []);
+
+            return (
+                <div className="min-h-screen flex flex-col bg-slate-900 p-6">
+                    <div className="flex justify-between items-center mb-8">
+                        <h1 className="text-3xl font-bold text-white">Admin Dashboard</h1>
+                        <Button variant="danger" onClick={onLogout} className="py-2 px-4 text-sm">Logout</Button>
+                    </div>
+                    <div className="flex gap-4 mb-6">
+                        <button onClick={() => setActiveTab('REQUESTS')} className={`px-6 py-2 rounded-full transition-all ${activeTab === 'REQUESTS' ? 'bg-cyan-500 text-white' : 'bg-slate-800 text-gray-400'}`}>Driver Requests</button>
+                        <button onClick={() => setActiveTab('MONITOR')} className={`px-6 py-2 rounded-full transition-all ${activeTab === 'MONITOR' ? 'bg-cyan-500 text-white' : 'bg-slate-800 text-gray-400'}`}>Monitor</button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto">
+                        {activeTab === 'REQUESTS' ? (
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                {requests.map(req => (
+                                    <div key={req.id} className="bg-slate-800 p-6 rounded-2xl border border-white/5 shadow-xl">
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div><h3 className="text-xl font-bold">{req.name}</h3><p className={`text-sm mt-1 ${req.status === 'PENDING' ? 'text-yellow-400' : req.status === 'APPROVED' ? 'text-green-400' : 'text-red-400'}`}>{req.status}</p></div>
+                                        </div>
+                                        {req.status === 'PENDING' && (
+                                            <div className="flex gap-2 mt-4">
+                                                <Button variant="success" className="flex-1 text-sm py-2" onClick={() => MockService.approveDriver(req.id)}>Accept</Button>
+                                                <Button variant="danger" className="flex-1 text-sm py-2" onClick={() => MockService.rejectDriver(req.id)}>Reject</Button>
+                                            </div>
+                                        )}
+                                        {req.status === 'APPROVED' && (
+                                            <div className="mt-4 bg-slate-900 p-3 rounded-lg border border-white/10">
+                                                <p className="text-xs text-gray-400">Credentials:</p>
+                                                <p className="font-mono text-cyan-400 mt-1">ID: {req.generatedUserId}</p>
+                                                <p className="font-mono text-pink-400">PW: {req.generatedPassword}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="h-full min-h-[400px]"><IsometricMap active={true}><div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-slate-900/80 p-4 rounded-xl text-center backdrop-blur-md border border-white/10"><p className="text-2xl font-bold text-white">System Monitor</p><p className="text-cyan-400">Live Traffic View</p></div><div className="absolute top-1/3 left-1/4"><TricycleMarker type="driver" /></div><div className="absolute bottom-1/3 right-1/3"><TricycleMarker type="passenger" /></div></IsometricMap></div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const PassengerDashboard = ({ user, onLogout }) => {
+            const [booking, setBooking] = useState(undefined);
+            const [seats, setSeats] = useState(1);
+            const [pickup, setPickup] = useState('');
+            const [dropoff, setDropoff] = useState('');
+            const [msgText, setMsgText] = useState('');
+
+            useEffect(() => {
+                const i = setInterval(() => setBooking(MockService.getPassengerBooking(user.id) ? { ...MockService.getPassengerBooking(user.id) } : undefined), 1000);
+                return () => clearInterval(i);
+            }, [user.id]);
+
+            return (
+                <div className="min-h-screen flex flex-col md:flex-row">
+                    <div className="w-full md:w-96 bg-slate-900 p-6 flex flex-col border-r border-white/10 z-20 shadow-2xl">
+                        <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">Hello, {user.name}</h2><button onClick={onLogout} className="text-gray-400 hover:text-white">Exit</button></div>
+                        {!booking ? (
+                            <form onSubmit={(e) => { e.preventDefault(); MockService.createBooking(user.id, user.name, seats, pickup, dropoff); }} className="space-y-6 bg-slate-800/50 p-6 rounded-2xl border border-white/5">
+                                <h3 className="text-xl font-semibold mb-4">Book a Ride</h3>
+                                <div><label className="block text-sm text-gray-400 mb-2">Seats</label><div className="flex gap-2">{[1, 2, 3, 4].map(num => (<button key={num} type="button" onClick={() => setSeats(num)} className={`flex-1 py-3 rounded-lg font-bold transition-all ${seats === num ? 'bg-cyan-500 text-white' : 'bg-slate-700 text-gray-400'}`}>{num}</button>))}</div></div>
+                                <Input value={pickup} onChange={e => setPickup(e.target.value)} placeholder="Pick Up" required />
+                                <Input value={dropoff} onChange={e => setDropoff(e.target.value)} placeholder="Destination" required />
+                                <Button type="submit" className="w-full mt-4">FIND TRICYCLE</Button>
+                            </form>
+                        ) : (
+                            <div className="flex-1 flex flex-col">
+                                <div className="bg-slate-800/80 p-6 rounded-2xl border border-white/10 mb-4">
+                                    <div className="flex justify-between items-center mb-2"><span className="text-sm text-gray-400">Status</span><span className={`px-3 py-1 rounded-full text-xs font-bold ${booking.status === 'ACCEPTED' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{booking.status}</span></div>
+                                    <h3 className="text-xl font-bold mb-1">{booking.status === 'PENDING' ? 'Finding Driver...' : `${booking.driverName} is coming!`}</h3>
+                                    <Button variant="danger" className="w-full py-2 text-sm mt-4" onClick={() => MockService.cancelBooking(booking.id)}>Cancel Booking</Button>
+                                </div>
+                                {booking.status === 'ACCEPTED' && (
+                                    <div className="flex-1 bg-slate-950 rounded-xl border border-white/10 flex flex-col overflow-hidden">
+                                        <div className="flex-1 p-3 overflow-y-auto space-y-3">{booking.messages.map(m => (<div key={m.id} className={`flex flex-col ${m.senderId === user.id ? 'items-end' : 'items-start'}`}><div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${m.senderId === user.id ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-gray-200'}`}>{m.text}</div></div>))}</div>
+                                        <form onSubmit={(e) => { e.preventDefault(); MockService.sendMessage(booking.id, user.id, user.name, msgText); setMsgText(''); }} className="p-2 bg-slate-900 border-t border-white/10 flex gap-2"><input className="flex-1 bg-slate-800 border-none rounded-lg px-3 py-2 text-sm text-white" value={msgText} onChange={e => setMsgText(e.target.value)} placeholder="Type..." /><button type="submit" className="bg-cyan-500 p-2 rounded-lg text-white">➤</button></form>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex-1 relative bg-slate-800 overflow-hidden"><IsometricMap active={true}><div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"><TricycleMarker type="passenger" /></div>{booking?.status === 'ACCEPTED' && <div className="absolute top-1/3 left-1/3 animate-pulse"><TricycleMarker type="driver" /></div>}</IsometricMap></div>
+                </div>
+            );
+        };
+
+        const DriverDashboard = ({ user, onLogout }) => {
+            const [activeBooking, setActiveBooking] = useState(undefined);
+            const [pendingBookings, setPendingBookings] = useState([]);
+            const [msgText, setMsgText] = useState('');
+
+            useEffect(() => {
+                const i = setInterval(() => {
+                    const myBooking = MockService.getMyBooking(user.id);
+                    setActiveBooking(myBooking ? { ...myBooking } : undefined);
+                    setPendingBookings(!myBooking ? MockService.getAvailableBookings() : []);
+                }, 1000);
+                return () => clearInterval(i);
+            }, [user.id]);
+
+            return (
+                <div className="min-h-screen flex flex-col md:flex-row">
+                    <div className="w-full md:w-[450px] bg-slate-900 p-6 flex flex-col border-r border-white/10 shadow-2xl z-20">
+                        <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold text-amber-400 flex items-center gap-2"><span>🛺</span> DRIVER: {user.name}</h2><button onClick={onLogout} className="text-gray-400 hover:text-white">Exit</button></div>
+                        {!activeBooking ? (
+                            <div className="flex-1 overflow-y-auto space-y-4">
+                                <h3 className="text-gray-400 text-xs font-bold mb-4">Available Passengers</h3>
+                                {pendingBookings.map(b => (
+                                    <div key={b.id} className="bg-slate-800 p-5 rounded-xl border-l-4 border-cyan-500 shadow-lg">
+                                        <div className="flex justify-between items-start mb-2"><h4 className="font-bold text-white text-lg">{b.passengerName}</h4><span className="bg-slate-700 px-2 py-1 rounded text-xs text-cyan-300">{b.seats} Seats</span></div>
+                                        <div className="text-sm text-gray-300 space-y-1 mb-4"><p>📍 From: {b.pickup}</p><p>🏁 To: {b.dropoff}</p></div>
+                                        <Button onClick={() => MockService.acceptBooking(b.id, user.id, user.name)} className="w-full py-2 bg-amber-500">ACCEPT RIDE</Button>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="flex-1 flex flex-col">
+                                <div className="bg-amber-500/10 p-6 rounded-2xl border border-amber-500/30 mb-4">
+                                    <h3 className="text-amber-400 font-bold text-lg mb-4">Active Trip</h3>
+                                    <p className="text-white font-bold text-xl">{activeBooking.passengerName}</p>
+                                    <Button variant="danger" className="w-full text-sm py-2 mt-4" onClick={() => {MockService.rejectBooking(activeBooking.id); setActiveBooking(undefined);}}>Reject / End Ride</Button>
+                                </div>
+                                <div className="flex-1 bg-slate-950 rounded-xl border border-white/10 flex flex-col overflow-hidden">
+                                    <div className="flex-1 p-3 overflow-y-auto space-y-3">{activeBooking.messages.map(m => (<div key={m.id} className={`flex flex-col ${m.senderId === user.id ? 'items-end' : 'items-start'}`}><div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${m.senderId === user.id ? 'bg-amber-600 text-white' : 'bg-slate-800 text-gray-200'}`}>{m.text}</div></div>))}</div>
+                                    <form onSubmit={(e) => { e.preventDefault(); MockService.sendMessage(activeBooking.id, user.id, user.name, msgText); setMsgText(''); }} className="p-2 bg-slate-900 border-t border-white/10 flex gap-2"><input className="flex-1 bg-slate-800 border-none rounded-lg px-3 py-2 text-sm text-white" value={msgText} onChange={e => setMsgText(e.target.value)} placeholder="Type..." /><button type="submit" className="bg-amber-500 p-2 rounded-lg text-white">➤</button></form>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex-1 bg-slate-800 relative"><IsometricMap active={true}>{activeBooking ? <><div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"><TricycleMarker type="driver"/></div><div className="absolute top-1/4 right-1/4"><TricycleMarker type="passenger"/></div></> : <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-50"><TricycleMarker type="driver"/></div>}</IsometricMap></div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [currentView, setCurrentView] = useState('LANDING');
+            const [currentUser, setCurrentUser] = useState(null);
+            
+            const handleBack = () => { setCurrentUser(null); setCurrentView('LANDING'); };
+
+            if (currentView === 'LANDING') return (
+                <div className="min-h-screen flex flex-col items-center justify-center relative bg-[url('https://images.unsplash.com/photo-1494515843206-f3117d3f51b7?q=80&w=2072&auto=format&fit=crop')] bg-cover bg-center">
+                    <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm"></div>
+                    <div className="relative z-10 text-center space-y-8 animate-fade-in p-4">
+                        <div className="mb-8"><h1 className="text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500">TRICYKING</h1><p className="text-gray-300 text-xl mt-2 tracking-widest uppercase">Premium Tricycle Booking</p></div>
+                        <div className="grid gap-4 w-full max-w-sm mx-auto">
+                            <Button onClick={() => setCurrentView('PASSENGER_LOGIN')}>I am a Passenger</Button>
+                            <Button variant="outline" onClick={() => setCurrentView('DRIVER_LOGIN')}>I am a Driver</Button>
+                            <div className="pt-8"><button onClick={() => setCurrentView('ADMIN_LOGIN')} className="text-xs text-gray-500 hover:text-white">Admin Access</button></div>
+                        </div>
+                    </div>
+                    <div className="absolute bottom-0 w-full h-64 opacity-30 pointer-events-none"><IsometricMap /></div>
+                </div>
+            );
+
+            if (currentView === 'ADMIN_LOGIN') return <AdminLogin onLogin={() => setCurrentView('ADMIN_DASH')} onBack={handleBack} />;
+            if (currentView === 'ADMIN_DASH') return <AdminDashboard onLogout={handleBack} />;
+            if (currentView === 'PASSENGER_LOGIN') return <PassengerLogin onLogin={(u) => { setCurrentUser(u); setCurrentView('PASSENGER_DASH'); }} onBack={handleBack} />;
+            if (currentView === 'PASSENGER_DASH') return <PassengerDashboard user={currentUser} onLogout={handleBack} />;
+            if (currentView === 'DRIVER_LOGIN') return <DriverLogin onLogin={(u) => { setCurrentUser(u); setCurrentView('DRIVER_DASH'); }} onBack={handleBack} />;
+            if (currentView === 'DRIVER_DASH') return <DriverDashboard user={currentUser} onLogout={handleBack} />;
+            return <div>Error</div>;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
